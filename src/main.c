@@ -23,7 +23,7 @@
 #include <dk_buttons_and_leds.h>
 
 #define MAX_REC_COUNT 1
-#define NDEF_MSG_BUF_SIZE 256
+#define NDEF_MSG_BUF_SIZE 128
 
 #define NFC_FIELD_LED DK_LED1
 #define SYSTEM_ON_LED DK_LED2
@@ -33,6 +33,11 @@ static const uint8_t en_payload[] = {
 	'H', 'e', 'l', 'l', 'o', ' ', 'W', 'o', 'r', 'l', 'd', '!'};
 static const uint8_t en_code[] = {'e', 'n'};
 
+/* 遥遥领先！ \u6590\u6590\u8698\u4851\u01ff */
+static const uint8_t zh_payload[] = {
+	'\x90', '\x65', '\x90', '\x65', '\x98', '\x86', '\x51', '\x48', '\xff', '\x01'};
+static const uint8_t zh_code[] = {'z', 'h'};
+
 /* Package: com.hypergryph.arknights */
 static const uint8_t android_pkg_name[] = {
 	'c', 'o', 'm', '.',
@@ -40,7 +45,8 @@ static const uint8_t android_pkg_name[] = {
 	'a', 'r', 'k', 'n', 'i', 'g', 'h', 't', 's'};
 
 /* Buffer used to hold an NFC NDEF message. */
-static uint8_t text_msg_buf[NDEF_MSG_BUF_SIZE];
+static uint8_t text_en_msg_buf[NDEF_MSG_BUF_SIZE];
+static uint8_t text_zh_msg_buf[NDEF_MSG_BUF_SIZE];
 static uint8_t launch_app_msg_buf[NDEF_MSG_BUF_SIZE];
 
 /**
@@ -70,11 +76,12 @@ static void nfc_callback(void *context,
 
 typedef enum
 {
-	NFC_APP_TEXT = 0U,
+	NFC_APP_TEXT_EN = 0U,
+	NFC_APP_TEXT_ZH,
 	NFC_APP_LAUNCHAPP
 } nfc_app_t;
 
-static int nfc_text_encode(uint8_t *buffer, uint32_t *len)
+static int nfc_text_en_encode(uint8_t *buffer, uint32_t *len)
 {
 	NFC_NDEF_TEXT_RECORD_DESC_DEF(nfc_text_rec,
 								  UTF_8,
@@ -93,7 +100,36 @@ static int nfc_text_encode(uint8_t *buffer, uint32_t *len)
 		return -1;
 	}
 
-	/* Encode welcome message */
+	/* Encode text message */
+	if (nfc_ndef_msg_encode(&NFC_NDEF_MSG(nfc_text_msg), buffer, len) < 0)
+	{
+		printk("Cannot encode message!\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+static int nfc_text_zh_encode(uint8_t *buffer, uint32_t *len)
+{
+	NFC_NDEF_TEXT_RECORD_DESC_DEF(nfc_text_rec,
+								  UTF_16,
+								  zh_code,
+								  sizeof(zh_code),
+								  zh_payload,
+								  sizeof(zh_payload));
+
+	NFC_NDEF_MSG_DEF(nfc_text_msg, MAX_REC_COUNT);
+
+	/* Add record */
+	if (nfc_ndef_msg_record_add(&NFC_NDEF_MSG(nfc_text_msg),
+								&NFC_NDEF_TEXT_RECORD_DESC(nfc_text_rec)) < 0)
+	{
+		printk("Cannot add record!\n");
+		return -1;
+	}
+
+	/* Encode text message */
 	if (nfc_ndef_msg_encode(&NFC_NDEF_MSG(nfc_text_msg), buffer, len) < 0)
 	{
 		printk("Cannot encode message!\n");
@@ -124,16 +160,31 @@ static int nfc_payload_set(nfc_app_t nfc_app)
 	uint32_t len;
 
 	/* Set created message as the NFC payload */
-	if (nfc_app == NFC_APP_TEXT)
+	if (nfc_app == NFC_APP_TEXT_EN)
 	{
-		len = sizeof(text_msg_buf);
-		if (nfc_text_encode(text_msg_buf, &len) < 0)
+		len = sizeof(text_en_msg_buf);
+		if (nfc_text_en_encode(text_en_msg_buf, &len) < 0)
 		{
 			printk("Cannot encode text message!\n");
 			return -1;
 		}
 		/* Set created message as the NFC payload */
-		if (nfc_t2t_payload_set(text_msg_buf, len) < 0)
+		if (nfc_t2t_payload_set(text_en_msg_buf, len) < 0)
+		{
+			printk("Cannot set payload!\n");
+			return -1;
+		}
+	}
+	else if (nfc_app == NFC_APP_TEXT_ZH)
+	{
+		len = sizeof(text_zh_msg_buf);
+		if (nfc_text_zh_encode(text_zh_msg_buf, &len) < 0)
+		{
+			printk("Cannot encode text message!\n");
+			return -1;
+		}
+		/* Set created message as the NFC payload */
+		if (nfc_t2t_payload_set(text_zh_msg_buf, len) < 0)
 		{
 			printk("Cannot set payload!\n");
 			return -1;
@@ -266,7 +317,7 @@ static int board_init(void)
 int main(void)
 {
 	uint32_t button_state = 0;
-	nfc_app_t nfc_app = NFC_APP_LAUNCHAPP;
+	nfc_app_t nfc_app = NFC_APP_TEXT_EN;
 
 	/* Configure LED-pins as outputs. */
 	if (board_init() < 0)
@@ -291,8 +342,19 @@ int main(void)
 
 		if (button_state & DK_BTN1_MSK)
 		{
-			nfc_app = 1 - nfc_app;
-			printk("Switching to %s\n", nfc_app == NFC_APP_TEXT ? "text" : "app");
+			if (nfc_app == NFC_APP_LAUNCHAPP)
+			{
+				nfc_app = NFC_APP_TEXT_EN;
+			}
+			else
+			{
+				nfc_app += 1;
+			}
+
+			printk("Switching to %s\n",
+				   nfc_app == NFC_APP_TEXT_EN ? \
+				   "text_en" : (nfc_app == NFC_APP_TEXT_ZH) ? \
+				   "text_zh" : "app");
 
 			/* Stop sensing NFC field */
 			if (nfc_t2t_emulation_stop() < 0)
